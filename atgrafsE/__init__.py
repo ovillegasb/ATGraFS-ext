@@ -20,6 +20,7 @@ The Journal of Physical Chemistry. A, 118(40), 9607–14.
 """
 
 import logging
+from atgrafsE.core import Autografs
 
 __all__ = ["core"]
 __version__ = "0.0.1"
@@ -45,11 +46,11 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(__name__)
-
 logger.setLevel(logging.DEBUG)
-logger.info('Started')
-logger.debug('This message should go to the log file')
-logger.info('So should this')
-logger.warning('And this, too')
-logger.error('And non-ASCII stuff, too, like Øresund and Malmö')
-logger.info('Finished')
+
+# logger.info('Started')
+# logger.debug('This message should go to the log file')
+# logger.info('So should this')
+# logger.warning('And this, too')
+# logger.error('And non-ASCII stuff, too, like Øresund and Malmö')
+# logger.info('Finished')
