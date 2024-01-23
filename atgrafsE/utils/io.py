@@ -1,4 +1,4 @@
-"""."""
+"""TODO"""
 
 import os
 import logging
@@ -185,24 +185,37 @@ def read_sbu(path=None, formats=["xyz"]):
     if path is not None:
         path = os.path.abspath(path)
     else:
-        path = os.path.join(__data__,"sbu")
+        path = os.path.join(__data__, "sbu")
 
     logger.debug("path: {}".format(path))
 
     SBUs = {}
-    for sbu_file in os.listdir(path):
+    # if this is a file
+    if path.endswith("xyz"):
+        sbu_file = path
         ext = sbu_file.split(".")[-1]
-        if ext in formats:
-            for sbu in ase.io.iread(os.path.join(path,sbu_file)):
-                try:
-                    name  = sbu.info["name"]
-                    SBUs[name] = sbu
-                except Exception as e:
-                    continue
+        for sbu in ase.io.iread(sbu_file):
+            try:
+                name = sbu.info["name"]
+                SBUs[name] = sbu
+            except Exception as e:
+                continue
+
+    else:
+        for sbu_file in os.listdir(path):
+            ext = sbu_file.split(".")[-1]
+            if ext in formats:
+                for sbu in ase.io.iread(os.path.join(path, sbu_file)):
+                    try:
+                        name = sbu.info["name"]
+                        SBUs[name] = sbu
+                    except Exception as e:
+                        continue
     return SBUs
 
+
 def write_gin(path, atoms, bonds, mmtypes):
-    """Write an GULP input file to disc"""
+    """Write an GULP input file to disc."""
     with open(path, "w") as fileobj:
         fileobj.write('opti conp molmec noautobond conjugate cartesian unit positive unfix\n')
         fileobj.write('maxcyc 500\n')

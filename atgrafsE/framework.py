@@ -1,4 +1,4 @@
-"""TODO"""
+"""Submodule that contains the functions and classes to work with metal-organic Framework."""
 
 import logging
 import copy
@@ -8,30 +8,30 @@ import ase
 import scipy.optimize
 import scipy.linalg
 import numpy as np
+import itertools as it
 
 from collections import defaultdict
 
+from atgrafsE.utils.topology import Topology
 from atgrafsE.utils.io import write_gin
 
 logger = logging.getLogger(__name__)
 
 
 class Framework:
-    """
-    The Framework object contain the results of an Autografs run.
+    """The Framework object contain the results of an Autografs run.
 
-    Designed to store and post-process the aligned fragments and the
-    corresponding topology of an Autografs-made structure. 
-    Methods available are setters and getters for the topology, individual SBU,
-    rescaling of the total structure, and finally the connecting and returning
-    of a clean ASE Atoms object.
-    The SBUs are assumed to already be aligned and tagged by the 
-    Framework generator, and both bonds and mmtypes are assumed to be ordered.
-    The bond matrices are also assumed to be block symmetrical.
+    Designed to store and post-process the aligned fragments and the corresponding topology of an
+    Autografs-made structure.  Methods available are setters and getters for the topology,
+    individual SBU, rescaling of the total structure, and finally the connecting and returning of a
+    clean ASE Atoms object. The SBUs are assumed to already be aligned and tagged by the Framework
+    generator, and both bonds and mmtypes are assumed to be ordered. The bond matrices are also
+    assumed to be block symmetrical.
     """
+
     def __init__(self, topology=None, building_units=None, mmtypes=None, bonds=None):
         """Constructor for the Framework class.
-
+        TODO
         Can be initialized empty and filled consecutively.
         topology -- Topology object.
         SBU      -- list of ASE Atoms objects.
@@ -58,28 +58,28 @@ class Framework:
         self._todel = defaultdict(list)
 
     def __contains__(self, obj):
-        """Iterable intrinsic"""
+        """Iterate intrinsic."""
         r = False
         if hasattr(obj, 'atoms'):
-            r = any([obj.atoms==sbu.atoms for sbu in self.SBU.values()])
+            r = any([obj.atoms == sbu.atoms for sbu in self.SBU.values()])
         return r
 
     def __delitem__(self, key):
-        """Indexable intrinsic"""
-        logger.info("Deleting {0} {1}".format(self.SBU[key].name,key))
+        """Indexable intrinsic."""
+        logger.info("Deleting {0} {1}".format(self.SBU[key].name, key))
         del self.SBU[key]
 
     def __setitem__(self, key, obj):
-        """Indexable intrinsic"""
+        """Indexable intrinsic."""
         if hasattr(obj, 'atoms'):
             self.SBU[key] = object
 
     def __getitem__(self, key):
-        """Indexable intrinsic"""
+        """Indexable intrinsic."""
         return self.SBU[key]
 
     def __len__(self):
-        """Sizeable intrinsic"""
+        """Sizeable intrinsic."""
         return len(self.SBU)
 
     def __iter__(self):
@@ -87,7 +87,7 @@ class Framework:
         return iter(self.SBU.items())
 
     def copy(self):
-        """Return a copy of itself as a new instance"""
+        """Return a copy of itself as a new instance."""
         new = self.__class__(
             topology = self.get_topology(),
             building_units = copy.deepcopy(self.SBU),
@@ -197,6 +197,73 @@ class Framework:
         """Return a copy of the topology attribute as an ASE Atoms object."""
         return self.topology.copy()
 
+    def get_supercell(self, m=(2, 2, 2)):
+        """Return a framework supercell using m as multiplier.
+
+        Setup this way to keep the whole modifications that could
+        have been made to the framework.
+        """
+        if isinstance(m, int):
+            m = (m, m, m)
+        logger.info("Creating supercell {0}x{1}x{2}.".format(*m))
+        # get the offset direction ranges
+        x = list(range(0, m[0], 1))
+        y = list(range(0, m[1], 1))
+        z = list(range(0, m[2], 1))
+        # new framework object
+        supercell = self.copy()
+        ocell = supercell.topology.atoms.get_cell()
+        ocellpar = ase.geometry.cell_to_cellpar(ocell)
+        newcellpar = ocellpar.copy()
+        newcellpar[0] *= m[0]
+        newcellpar[1] *= m[1]
+        newcellpar[2] *= m[2]
+        newcell = ase.geometry.cellpar_to_cell(newcellpar)
+        otopo = supercell.topology.copy()
+        supercell.topology.atoms.set_cell(newcell, scale_atoms=False)
+        L = len(otopo.atoms)
+        # for the correct tagging analysis
+        superatoms = otopo.atoms.copy().repeat(rep=m)
+        # ERROR PRONE! the scaling modifies the shape 
+        # in the topology, resulting in weird behaviour in
+        # very deformed cells.
+        supertopo = Topology(name="supertopo", atoms=superatoms, analyze=True)
+        # iterate over offsets and add the corresponding objects
+        for offset in it.product(x, y, z):
+            # central cell, ignore
+            if offset == (0, 0, 0):
+                for atom in otopo.atoms.copy():
+                    if atom.symbol == "X":
+                        continue
+                    if atom.index not in supercell.SBU.keys():
+                        continue
+                    # directly tranfer new tags
+                    sbu = supercell[atom.index]
+                    sbu.transfer_tags(supertopo.fragments[atom.index])           
+            else:
+                offset = np.asarray(offset)
+                coffset = offset.dot(ocell)
+                for atom in otopo.atoms.copy():
+                    atom.position += coffset
+                    supercell.topology.atoms.append(atom)
+                    if atom.symbol == "X":
+                        continue
+                    # check the new idx of the SBU
+                    newidx = len(supercell.topology.atoms)-1
+                    # check that the SBU was not deleted before
+                    if atom.index not in supercell.SBU.keys():
+                        continue
+                    sbu = supercell[atom.index].copy()
+                    sbu.atoms.positions += coffset
+                    sbu.transfer_tags(supertopo.fragments[newidx])
+                    supercell.append(
+                        index=newidx,
+                        sbu=sbu,
+                        update=False
+                    )
+                    supercell._todel[newidx] = list(supercell._todel[atom.index])
+        return supercell
+
     def append(self, index, sbu, update=False):
         """Append all data releted to a building unit in the framework.
 
@@ -302,17 +369,27 @@ class Framework:
             logger.info("\tgamma = {gamma:<3.1f} degrees".format(gamma=result.x[5]))
 
     def write(self, f="./mof", ext="gin"):
-        """Write a chemical information file to disk in selected format"""
+        """
+        Write a chemical information file to disk in selected format.
+
+        Parameters:
+        -----------
+        f : str
+            File name.
+
+        ext : str
+            File extension.
+        """
         atoms, bonds, mmtypes = self.get_atoms(dummies=False)
 
         # add a numerical artifact for optimization in z direction
-        if sum(atoms.pbc)==2:
-            atoms.positions[:,2] += numpy.random.rand(len(atoms))*0.01
+        if sum(atoms.pbc) == 2:
+            atoms.positions[:, 2] += np.random.rand(len(atoms))*0.01
 
-        path = os.path.abspath("{path}.{ext}".format(path=f,ext=ext))
+        path = os.path.abspath("{path}.{ext}".format(path=f, ext=ext))
         logger.info("Framework saved to disk at {p}".format(p=path))
 
-        if ext=="gin":
-            write_gin(path,atoms,bonds,mmtypes)
+        if ext == "gin":
+            write_gin(path, atoms, bonds, mmtypes)
         else:
-            ase.io.write(path,atoms)
+            ase.io.write(path, atoms)

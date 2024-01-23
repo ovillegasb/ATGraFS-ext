@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 class Topology:
-    """Contener class for the topology information"""
+    """Contener class for the topology information."""
 
     def __init__(self, name, atoms, analyze=True):
-        """Constructor for a topology, from an ASE Atoms."""
+        """Construct for a topology, from an ASE Atoms."""
         logger.debug("Creating Topology {0}".format(name))
         self.name = name
         self.atoms = atoms 
@@ -109,8 +109,8 @@ class Topology:
         # separate the dummies from the rest
         logger.debug("Analyzing fragments of topology {0}.".format(self.name))
         numbers = np.asarray(self.atoms.get_atomic_numbers())
-        Xis  = np.where(numbers==0)[0]
-        Ais  = np.where(numbers>0)[0]
+        Xis = np.where(numbers == 0)[0]
+        Ais = np.where(numbers > 0)[0]
         # setup the tags
         tags = np.zeros(len(self.atoms))
         tags[Xis] = Xis + 1
@@ -125,16 +125,16 @@ class Topology:
         for ai in Ais:
             # get indices and offsets of dummies only!
             ni, no = neighborlist.get_neighbors(ai)
-            ni, no = zip(*[(idx,off) for idx, off in list(zip(ni, no)) if idx in Xis])
+            ni, no = zip(*[(idx, off) for idx, off in list(zip(ni, no)) if idx in Xis])
             ni = np.asarray(ni)
             no = np.asarray(no)
-    
+
             # get absolute positions, no offsets
             positions = self.atoms.positions[ni] + no.dot(self.atoms.cell)
-            
+
             # create the Atoms object
-            fragment = Atoms("X"*len(ni), positions, tags=tags[ni]) 
-    
+            fragment = Atoms("X"*len(ni), positions, tags=tags[ni])
+
             # calculate the point group properties
             max_order = len(ni)
             shape = symmetry.get_symmetry_elements(

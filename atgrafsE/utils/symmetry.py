@@ -103,6 +103,21 @@ class PointGroup:
                 logger.debug("Symmetric top molecule detected")
                 self.analyze_symmetric_top()
 
+    def analyze_cyclic_groups(self):
+        """Handle cyclic group molecules."""
+        order, axis, op = max(self.symmops["C"], key=lambda v: v[0])
+        self.schoenflies = "C{0}".format(order)
+        mirror_type = self.find_reflection_plane(axis)
+        if mirror_type == "h":
+            self.schoenflies += "h"
+        elif mirror_type == "v":
+            self.schoenflies += "v"
+        elif mirror_type is None:
+            rotoref = reflection(axis).dot(rotation(axis=axis, order=2*order))
+            if is_valid_op(self.mol, rotoref):
+                self.schoenflies = "S{0}".format(2*order)
+                self.symmops["S"] += [(order, axis, rotoref),]
+
     def analyze_linear(self):
         """TODO"""
         inversion = - np.eye(3)
@@ -187,6 +202,34 @@ class PointGroup:
         else:
             self.analyze_nonrotational_groups()
 
+    def analyze_nonrotational_groups(self):
+        """Handle molecules with no rotational symmetry.
+
+        Only possible point groups are C1, Cs and Ci.
+        """
+        self.schoenflies = "C1"
+        if self.symmops["-I"] is not None:
+            self.schoenflies = "Ci"
+        else:
+            for v in self.eigvecs:
+                mirror_type = self.find_reflection_plane(v)
+                if mirror_type is not None:
+                    self.schoenflies = "Cs"
+                    break
+
+    def analyze_dihedral_groups(self):
+        """Handle dihedral group molecules.
+
+        i.e those with intersecting R2 axes and a main axis.
+        """
+        order, axis, op = max(self.symmops["C"], key=lambda v: v[0])
+        self.schoenflies = "D{0}".format(order)
+        mirror_type = self.find_reflection_plane(axis)
+        if mirror_type == "h":
+            self.schoenflies += "h"
+        elif not mirror_type == "":
+            self.schoenflies += "d"
+
     def find_spherical_axes(self):
         """Looks for R5, R4, R3 and R2 axes in spherical top molecules.  Point
         group T molecules have only one unique 3-fold and one unique 2-fold
@@ -246,8 +289,81 @@ class PointGroup:
             if len(indices) > 1:
                 # no symmetry for a set of 1...
                 valid_sets.append(self.mol.positions[indices])
-        
+
         return min(valid_sets, key=lambda s: len(s))
+
+    def find_reflection_plane(self, axis):
+        """Look for mirror symmetry of specified type about axis.
+
+        Possible types are "h" or "vd".  Horizontal (h) mirrors are perpendicular to
+        the axis while vertical (v) or diagonal (d) mirrors are parallel.  v
+        mirrors has atoms lying on the mirror plane while d mirrors do not.
+        """
+        symmop = None
+        # First test whether the axis itself is the normal to a mirror plane.
+        op = reflection(axis)
+        if is_valid_op(self.mol, op):
+            symmop = ("h", axis, op)
+        else:
+            # Iterate through all pairs of atoms to find mirror
+            for s1, s2 in it.combinations(self.mol, 2):
+                if s1.symbol == s2.symbol:
+                    normal = s1.position - s2.position
+                    if normal.dot(axis) < self.tol:
+                        op = reflection(normal)
+                        if is_valid_op(self.mol, op):
+                            if self.nrot > 1:
+                                symmop = ("d", normal, op)
+                                for prev_order, prev_axis, prev_op in self.symmops["C"]:
+                                    if not np.linalg.norm(prev_axis - axis) < self.tol:
+                                        if np.dot(prev_axis, normal) < self.tol:
+                                            symmop = ("v", normal, op)
+                                            break
+                            else:
+                                symmop = ("v", normal, op)
+                            break
+        if symmop is not None:
+            self.symmops["sigma"] += [symmop,]
+            return symmop[0]
+        else:
+            return symmop
+
+    def detect_rotational_symmetry(self, axis):
+        """Determine the rotational symmetry about supplied axis.
+
+        Used only for symmetric top molecules which has possible rotational symmetry
+        operations > 2.
+        """
+        min_set = self.find_possible_equivalent_positions(axis=axis)
+        max_sym = len(min_set)
+        for order in range(max_sym, 0, -1):
+            if max_sym % order != 0:
+                continue
+            op = rotation(axis=axis, order=order)
+            if is_valid_op(self.mol, op):
+                logger.debug("Found axis with order {0}".format(order))
+                self.symmops["C"] += [(order, axis, op),]
+                self.nrot += 1
+                return order
+        return 1
+
+    def has_perpendicular_C2(self, axis):
+        """Check for R2 axes perpendicular to unique axis.
+
+        For handling symmetric top molecules.
+        """
+        min_set = self.find_possible_equivalent_positions(axis=axis)
+        found = False
+        for s1, s2 in it.combinations(min_set, 2):
+            test_axis = np.cross(s1 - s2, axis)
+            if np.linalg.norm(test_axis) > self.tol:
+                op = rotation(axis=test_axis, order=2)
+                if is_valid_op(self.mol, op):
+                    self.symmops["C"] += [(2, test_axis, op),]
+                    self.nrot += 1
+                    found = True
+        return found
+
 
 def unique_axes(potential_axes, epsilon=0.1):
     """Return non colinear potential_axes only"""
