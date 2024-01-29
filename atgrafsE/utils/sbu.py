@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class SBU:
-    """Container class for a building unit information"""
+    """Container class for a building unit information."""
 
     def __init__(self, name, atoms=None):
-        """Constructor for a building unit, from an ASE Atoms."""
+        """Initialize a building unit, from an ASE Atoms."""
         logger.debug("New instance of SBU {0}".format(name))
         self.name = name
-        self.atoms = atoms 
+        self.atoms = atoms
         self.mmtypes = []
         self.bonds = []
         self.shape = []
@@ -38,10 +38,12 @@ class SBU:
         return self.atoms.copy()
 
     def _analyze(self):
-        """Guesses the mmtypes, bonds and pointgroup"""
+        """Guess the mmtypes, bonds and pointgroup."""
         logger.debug("SBU {0}: analyze bonding and symmetry.".format(self.name))
-        dummies = Atoms([x for x in self.atoms if x.symbol=="X"])
-        if len(dummies)>0:
+
+        # Detects geometry from dummy atoms
+        dummies = Atoms([x for x in self.atoms if x.symbol == "X"])
+        if len(dummies) > 0:
             pg = symmetry.PointGroup(mol=dummies.copy(), tol=0.1)
             max_order = min(8, len(dummies))
             shape = symmetry.get_symmetry_elements(
@@ -54,7 +56,7 @@ class SBU:
         self.bonds = bonds
         self.mmtypes = mmtypes
 
-    def set_atoms(self ,atoms ,analyze=False):
+    def set_atoms(self, atoms, analyze=False):
         """Set new Atoms object and reanalyze."""
         logger.debug("Resetting Atoms in SBU {0}".format(self.name))
         self.atoms = atoms
@@ -62,10 +64,8 @@ class SBU:
             logger.debug("\tAnalysis required.")
             self._analyze()
 
-        return None
-
     def copy(self):
-        """Return a copy of the object"""
+        """Return a copy of the object."""
         logger.debug("SBU {0}: creating copy.".format(self.name))
         new = SBU(name=str(self.name), atoms=None)
         new.set_atoms(atoms=self.get_atoms(), analyze=False)
@@ -76,15 +76,15 @@ class SBU:
         return new
 
     def transfer_tags(self, fragment):
-        """Transfer tags between an aligned fragment and the SBU"""
+        """Transfer tags between an aligned fragment and the SBU."""
         logger.debug("\tTagging dummies in SBU {n}.".format(n=self.name))
         # we keep a record of used tags.
-        unused = [x.index for x in self.atoms if x.symbol=="X"]
+        unused = [x.index for x in self.atoms if x.symbol == "X"]
         for atom in fragment:
             ids = [s.index for s in self.atoms if s.index in unused]
             pf = atom.position
             ps = self.atoms.positions[unused]
-            d  = np.linalg.norm(ps-pf,axis=1)
+            d = np.linalg.norm(ps-pf, axis=1)
             si = ids[np.argmin(d)]
             self.atoms[si].tag = atom.tag
             unused.remove(si)
@@ -92,7 +92,7 @@ class SBU:
 
 def read_sbu_database(update=False, path=None, use_defaults=True):
     """Return a dictionnary of ASE Atoms as SBUs."""
-    db_file = os.path.join(__data__,"sbu/sbu.pkl")
+    db_file = os.path.join(__data__, "sbu/sbu.pkl")
     user_db = (path is not None)
     no_dflt = (not os.path.isfile(db_file))
     logger.debug("db_file: %s" % db_file)
@@ -112,14 +112,14 @@ def read_sbu_database(update=False, path=None, use_defaults=True):
 
         sbu_len = len(sbu)
         logger.info("{0:<5} sbu loaded.".format(sbu_len))
-        with open(db_file,"wb") as pkl:
-            pickle.dump(obj=sbu,file=pkl)
+        with open(db_file, "wb") as pkl:
+            pickle.dump(obj=sbu, file=pkl)
 
         return sbu
 
     else:
         logger.info("Using saved sbu")
-        with open(db_file,"rb") as pkl:
+        with open(db_file, "rb") as pkl:
             sbu = pickle.load(file=pkl)
             sbu_len = len(sbu)
             logger.info("{0:<5} sbu loaded".format(sbu_len))

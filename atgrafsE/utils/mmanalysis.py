@@ -231,24 +231,24 @@ def best_radius(a, sbu, indices, ufflib):
 def best_type(dx, da, dc, ufflib, types):
     """Chooses the best UFF type according to neighborhood."""
     mincost = 1000.0
-    mintyp  = None
+    mintyp = None
     for typ in types:
         xx, aa, cc = ufflib[typ]
         cost_x = ((dx - xx)**2)/2.50
         cost_a = ((da - aa)**2)/180.0
         cost_c = ((dc - cc)**2)/4.0
-        cost =  cost_x + cost_a + cost_c
+        cost = cost_x + cost_a + cost_c
         if cost < mincost:
             mintyp = typ
-            mincost= cost
+            mincost = cost
 
     return mintyp
 
 
 def analyze_mm(sbu):
-    """Returns the UFF types and bond matrix for an ASE Atoms."""
-    library="uff4mof"
-    ufflib  = read_uff_library(library)
+    """Return the UFF types and bond matrix for an ASE Atoms."""
+    library = "uff4mof"
+    ufflib = read_uff_library(library)
     logger.debug("UFF Library loaded: {}".format(library))
     bonds = get_bond_matrix(sbu)
     logger.debug("Bond matrix loaded")
@@ -258,32 +258,33 @@ def analyze_mm(sbu):
             continue
         # get the starting symbol in uff nomenclature
         symbol = uff_symbol(atom)
+
         # narrow the choices
-        uff_types   = [k for k in ufflib.keys() if k.startswith(symbol)]
+        uff_types = [k for k in ufflib.keys() if k.startswith(symbol)]
         these_bonds = bonds[atom.index].copy()
         # if only one choice, use it
-        if len(uff_types)==1:
+        if len(uff_types) == 1:
             mmtypes[atom.index] = uff_types[0]
         # aromatics are easy also
-        elif (np.abs(these_bonds-1.5)<1e-6).any():
+        elif (np.abs(these_bonds-1.5) < 1e-6).any():
             uff_types = [typ for typ in uff_types if typ.endswith("R")]
             mmtypes[atom.index] = uff_types[0]
         else:
-            indices = np.where(these_bonds>=0.25)[0]
+            indices = np.where(these_bonds >= 0.25)[0]
             # coordination
             dc = len(indices)
             # angle
-            da = best_angle(atom.index,sbu,indices)
+            da = best_angle(atom.index, sbu, indices)
             # radius
-            dx = best_radius(atom.index,sbu,indices,ufflib)
+            dx = best_radius(atom.index, sbu, indices, ufflib)
             # complete data
-            mmtypes[atom.index] = best_type(dx,da,dc,ufflib,uff_types)
+            mmtypes[atom.index] = best_type(dx, da, dc, ufflib, uff_types)
 
     # now correct the dummies
-    for xi in [x.index for x in sbu if x.symbol=="X"]:
+    for xi in [x.index for x in sbu if x.symbol == "X"]:
         bonded = np.argmax(bonds[xi])
         mmtypes[xi] = mmtypes[bonded]
     mmtypes = np.array(mmtypes)
-    bonds   = np.array(bonds)
+    bonds = np.array(bonds)
 
     return bonds, mmtypes

@@ -1,12 +1,14 @@
-"""TODO"""
+"""Submodule that records information input and output functions."""
 
 import os
+import re
 import logging
 
 import numpy as np
 import ase
 from ase.data import chemical_symbols
 from ase.spacegroup import crystal
+from ase.spacegroup.spacegroup import get_datafile
 
 from atgrafsE.utils import __data__
 
@@ -26,9 +28,27 @@ coffee = """
 \\_____________________/
 """
 
+
+def read_spacegroup_data():
+    """Read the names of the spacegroups contained in the ASE database."""
+    grps = {}
+    spacegroup_data = get_datafile()
+    logger.debug("The ASE database file will be searched: %s" % spacegroup_data)
+    regex_grps = re.compile(r"""
+        ^(?P<num>\d+)\s+
+        """, re.X)
+
+    with open(spacegroup_data, "r", encoding="utf8") as DATA:
+        for line in DATA:
+            if regex_grps.match(line):
+                line = line.split()
+                grps["".join(line[1:]).upper()] = int(line[0])
+    return grps
+
+
 def read_cgd(path=None):
     """
-    Return a dictionary of topologies as ASE Atoms objects
+    Return a dictionary of topologies as ASE Atoms objects.
 
     The format CGD is used mainly by the Systre software and by Autografs. All
     details can be read on the website: http://rcsr.anu.edu.au/systre
@@ -48,128 +68,150 @@ def read_cgd(path=None):
     Reticular Chemistry Structure Resource (RCSR) constructed especially to be
     useful in the design of new structures of crystalline materials and in the
     analysis of old ones (cf. the discussion of reticular chemistry by Yaghi,
-    O. M. et al. Nature 2003, 423, 705-714). 
-
+    O. M. et al. Nature 2003, 423, 705-714).
     """
-    root = os.path.join(__data__,"topologies")
+    root = os.path.join(__data__, "topologies")
     topologies = {}
     # we need the names of the groups and their correspondance in ASE spacegroup data
     # this was compiled using Levenshtein distances and regular expressions
-    groups_file = os.path.join(root,"HermannMauguin.dat")
-    logger.debug("groups_file: %s" % groups_file)
-    grpf = open(groups_file,"rb")
-    groups = {l.split()[0]:l.split()[1] for l in grpf.read().decode("utf8").splitlines()}
-    grpf.close()
+
+    # The ASE's own database is loaded.
+    spacegroups = read_spacegroup_data()
 
     # read the rcsr topology data
     if path is None:
-        topology_file = os.path.join(root,"nets.cgd")
+        topology_file = os.path.join(root, "nets.cgd")
     else:
         topology_file = os.path.abspath(path)
 
     # the script as such starts here
     error_counter = 0
-    with open(topology_file,"rb") as tpf:
-        text = tpf.read().decode("utf8")
+    with open(topology_file, "r") as tpf:
+        text = tpf.read()
         # split the file by topology
         topologies_raw = [t.strip().strip("CRYSTAL") for t in text.split("END")]
+        # Remove lines that may be blank
+        topologies_raw = [t for t in topologies_raw if len(t.splitlines()) > 0]
+
         topologies_len = len(topologies_raw)
         logger.info("{0:<5} topologies before treatment".format(topologies_len))
         # long operation
         logger.info("This might take a few minutes. Time for coffee!")
-        ####logger.info("(")
-        ####logger.info(" )")
-        ####logger.info("[_])")
         logger.info(coffee)
-        #### TODO
+        ####TODO
         #### Paralelizar este paso
         for topology_raw in topologies_raw:
             # read from the template.
             # the edges are easier to comprehend by edge center
-            try:
-                lines = topology_raw.splitlines()
-                lines = [l.split() for l in lines if len(l)>2]
-                name = None
-                group = None
-                cell = []
-                symbols = []
-                nodes = []
-                for l in lines:
-                    if l[0].startswith("NAME"):
-                        name = l[1].strip()
-                    elif l[0].startswith("GROUP"):
-                        group = l[1]
-                    elif l[0].startswith("CELL"):
-                        cell = np.array(l[1:], dtype=np.float32)
-                    elif l[0].startswith("NODE"):
-                        this_symbol = chemical_symbols[int(l[2])]
-                        this_node = np.array(l[3:], dtype=np.float32)
-                        nodes.append(this_node)
-                        symbols.append(this_symbol)
-                    elif (l[0].startswith("#") and l[1].startswith("EDGE_CENTER")):
-                        # linear connector
-                        this_node = np.array(l[2:], dtype=np.float32)
-                        nodes.append(this_node)
-                        symbols.append("He")
-                    elif l[0].startswith("EDGE"):
-                        # now we append some dummies
-                        s    = int((len(l)-1)/2)
-                        midl = int((len(l)+1)/2)
-                        x0  = np.array(l[1:midl],dtype=np.float32).reshape(-1,1)
-                        x1  = np.array(l[midl:] ,dtype=np.float32).reshape(-1,1)
-                        xx  = np.concatenate([x0,x1],axis=1).T
-                        com = xx.mean(axis=0)
-                        xx -= com
-                        xx  = xx.dot(np.eye(s)*0.5)
-                        xx += com
-                        nodes   += [xx[0],xx[1]]
-                        symbols += ["X","X"]
-                nodes = np.array(nodes)
-                if len(cell)==3:
-                    # 2D net, only one angle and two vectors.
-                    # need to be completed up to 6 parameters
-                    pbc  = [True,True,False] 
-                    cell = np.array(list(cell[0:2])+[10.0,90.0,90.0]+list(cell[2:]), dtype=np.float32)
-                    # node coordinates also need to be padded
-                    nodes = np.pad(nodes, ((0,0),(0,1)), 'constant', constant_values=0.0)
-                elif len(cell)<3:
-                    error_counter += 1
-                    continue
-                else:
-                    pbc = True
-                # now some postprocessing for the space groups
-                setting = 1
-                if ":" in group:
-                    # setting might be 2
-                    group, setting = group.split(":")
-                    try: 
-                        setting = int(setting.strip())
-                    except ValueError:
-                        setting = 1
-                # ASE does not have all the spacegroups implemented yet
-                if group not in groups.keys():
-                    error_counter += 1
-                    continue
-                else:
-                    # generate the crystal
-                    group     = int(groups[group])
-                    topology  = crystal(symbols=symbols,
-                                        basis=nodes,
-                                        spacegroup=group,
-                                        setting=setting,
-                                        cellpar=cell,
-                                        pbc=pbc,
-                                        primitive_cell=False,
-                                        onduplicates="keep")
-                    # TODO !!! find a way to use equivalent positions for 
-                    # the multiple components frameworks !!!
-                    # use the info keyword to store it
-                    topologies[name] = topology
-            except Exception:
+            lines = topology_raw.splitlines()
+            lines = [line.split() for line in lines if len(line) > 2]
+            name = None
+            group = None
+            cell = []
+            symbols = []
+            nodes = []
+            for line in lines:
+                if line[0].startswith("NAME"):
+                    name = line[1].strip()
+                elif line[0].startswith("GROUP"):
+                    group = line[1].upper()
+                elif line[0].startswith("CELL"):
+                    cell = np.array(line[1:], dtype=np.float64)
+                elif line[0].startswith("NODE"):
+                    this_symbol = chemical_symbols[int(line[2])]
+                    this_node = np.array(line[3:], dtype=np.float64)
+                    nodes.append(this_node)
+                    symbols.append(this_symbol)
+                elif (line[0].startswith("#") and line[1].startswith("EDGE_CENTER")):
+                    # linear connector
+                    this_node = np.array(line[2:], dtype=np.float64)
+                    nodes.append(this_node)
+                    symbols.append("He")
+                elif line[0].startswith("EDGE"):
+                    # now we append some dummies
+                    s = int((len(line)-1)/2)
+                    midl = int((len(line)+1)/2)
+                    x0 = np.array(line[1:midl], dtype=np.float64).reshape(-1, 1)
+                    x1 = np.array(line[midl:], dtype=np.float64).reshape(-1, 1)
+                    xx = np.concatenate([x0, x1], axis=1).T
+                    com = xx.mean(axis=0)
+                    xx -= com
+                    xx = xx.dot(np.eye(s)*0.5)
+                    xx += com
+                    nodes += [xx[0], xx[1]]
+                    symbols += ["X", "X"]
+
+            if group is None:
+                logger.debug("The group not detected, lines:")
+                print(lines)
                 error_counter += 1
                 continue
-    logger.info("Topologies read with {err} errors.".format(err=error_counter))
 
+            nodes = np.array(nodes)
+
+            # Only cells with 3 dimensions or more will be considered.
+            # The lengths are considered to be angstroms.
+            if len(cell) == 3:
+                # 2D net, only one angle and two vectors.
+                # need to be completed up to 6 parameters
+                # FORMAT: CELL a b gamma
+                ##TODO
+                pbc = [True, True, False]
+                c = 10.0  # WHY?, test
+                alpha = 90.0
+                beta = 90.0
+                cell = np.array(
+                    list(cell[0:2]) + [c, alpha, beta] + list(cell[2:]), dtype=np.float64
+                )
+                # node coordinates also need to be padded
+                nodes = np.pad(nodes, ((0, 0), (0, 1)), 'constant', constant_values=0.0)
+            elif len(cell) < 3:
+                logger.debug("The next group contains a cell with less than 3 dimensions: %s" % group)
+                error_counter += 1
+                continue
+            else:
+                pbc = True
+
+            # now some postprocessing for the space groups
+            setting = 1
+            if ":" in group:
+                # setting might be 2
+                group, setting = group.split(":")
+                try:
+                    setting = int(setting.strip())
+                except ValueError:
+                    setting = 1
+
+            # ASE does not have all the spacegroups implemented yet
+            try:
+                spg_num = spacegroups[group]
+            except KeyError:
+                logger.debug("The following group has not been detected in the ASE database: %s" % group)
+                error_counter += 1
+                continue
+
+            # print(symbols, nodes, group, spg_num, setting, cell, pbc)
+            try:
+                topology = crystal(
+                    symbols=symbols,
+                    basis=nodes,
+                    spacegroup=spg_num,
+                    setting=setting,
+                    cellpar=cell,
+                    pbc=pbc,
+                    primitive_cell=False,
+                    onduplicates="keep"
+                )
+            except AssertionError:
+                logger.debug("An error has been found inside the crital function, check defined parameters c, alpha and beta, group: %s" % group)
+                error_counter += 1
+                continue
+            # TODO !!! find a way to use equivalent positions for
+            # the multiple components frameworks !!!
+            # use the info keyword to store it
+            topologies[name] = topology
+
+    logger.info("Topologies read with {err} errors.".format(err=error_counter))
     return topologies
 
 

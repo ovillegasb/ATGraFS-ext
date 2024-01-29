@@ -38,6 +38,7 @@ class Autografs:
             use_defaults=use_defaults,
             update=update
         )
+
         logger.info("Reading the building units database.")
         self.sbu = read_sbu_database(
             path=sbu_path,
@@ -142,20 +143,22 @@ class Autografs:
             return
 
         # some logging
+        #REVISAR
         self.log_sbu_dict(sbu_dict=self.sbu_dict, topology=self.topology)
-
         # carry on
         alpha = 0.0
         for idx, sbu in self.sbu_dict.items():
             logger.debug("Treating slot number {idx}".format(idx=idx))
             logger.debug("\t|--> Aligning SBU {name}".format(name=sbu.name))
             # now align and get the scaling factor
-            sbu,f = self.align(
+            sbu, f = self.align(
                 fragment=self.topology.fragments[idx],
                 sbu=sbu
             )
             alpha += f
             aligned.append(index=idx, sbu=sbu)
+
+        #exit()
 
         logger.info("")
         aligned.refine(alpha0=alpha)
@@ -213,7 +216,9 @@ class Autografs:
 
             # create the SBU object
             sbu = SBU(name=name, atoms=self.sbu[name])
+            # returns a list of shapes for SBU-compatible slots.
             slots = self.topology.has_compatible_slots(sbu=sbu, coercion=coercion)
+            #TODO, verificar
             if not slots:
                 logger.debug("SBU {s} has no compatible slot in topology {t}".format(
                     s=name, t=self.topology.name)
@@ -234,9 +239,11 @@ class Autografs:
             p = weights[shape]
             # no weights means same proba
             p /= np.sum(p)
-            # TODO buscar porque es cero?
+            ############################
+            #TODO buscar porque es cero?
             if len(p) == 0:
                 continue
+            ############################
 
             sbu_chosen = np.random.choice(by_shape[shape], p=p).copy()
             logger.debug("Slot {sl}: {sb} chosen with p={p}.".format(

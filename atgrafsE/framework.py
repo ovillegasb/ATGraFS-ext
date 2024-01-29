@@ -30,13 +30,21 @@ class Framework:
     """
 
     def __init__(self, topology=None, building_units=None, mmtypes=None, bonds=None):
-        """Constructor for the Framework class.
+        """Initialize the Framework class.
+
         TODO
         Can be initialized empty and filled consecutively.
-        topology -- Topology object.
-        SBU      -- list of ASE Atoms objects.
-        mmtypes  -- array of type names. e.g: 'C_R','O_3'...
-        bonds    -- block-symmetric matrix of bond orders.
+
+        Parameters:
+        -----------
+        topology : Topology class.
+            Class with system topology.
+        SBU : list of ase.Atoms.
+            A list of ASE Atomos objects.
+        mmtypes : numpy.array of str.
+            Array of type names. e.g: 'C_R','O_3'...
+        bonds : numpy.array.
+            Block-symmetric matrix of bond orders.
         """
         logger.debug("Creating Framework instance.")
         self.topology = topology
@@ -83,7 +91,7 @@ class Framework:
         return len(self.SBU)
 
     def __iter__(self):
-        """Iterable intrinsic"""
+        """Iterate intrinsic."""
         return iter(self.SBU.items())
 
     def copy(self):
@@ -281,7 +289,7 @@ class Framework:
         self.SBU[index] = sbu
         if update:
             # make the bonds matrix with a new block
-            self.bonds   = self.get_bonds()
+            self.bonds = self.get_bonds()
             # append the atom types
             self.mmtypes = self.get_mmtypes()
 
@@ -316,7 +324,7 @@ class Framework:
         """
         logger.info("Refining unit cell.")
         # get the scaled cell, normalized
-        I     = np.eye(3)*alpha0
+        I = np.eye(3)*alpha0
         cell0 = self.topology.atoms.get_cell()
         pbc = sum(self.topology.atoms.get_pbc())
         cell0 = cell0.dot(I/np.linalg.norm(cell0,axis=0))

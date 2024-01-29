@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 class PointGroup:
-    """A class to analyze the point group of a molecule. The general outline of
-    the algorithm is as follows:
+    """A class to analyze the point group of a molecule.
+
+    The general outline of the algorithm is as follows:
+
     1. Center the molecule around its center of mass.
     2. Compute the inertia tensor and the eigenvalues and eigenvectors.
     3. Handle the symmetry detection based on eigenvalues.
@@ -30,13 +32,17 @@ class PointGroup:
         d. Spherical top molecules have all three eigenvalues equal. They
            have the rare T, O or I point groups.
     """
+
     def __init__(self, mol, tol=0.1):
-        """The default settings are usually sufficient.
-            -- mol : Molecule to determine point group for.
+        """Initialize the class.
+
+        The default settings are usually sufficient.
+
+        -- mol : Molecule to determine point group for.
         """
         self.tol = tol
         self.etol = self.tol / 3.0
-        self.mol  = mol
+        self.mol = mol
 
         # center molecule
         self.mol.positions -= self.mol.positions.mean(axis=0)
@@ -47,41 +53,41 @@ class PointGroup:
             norm_factor = 1.0
 
         self.mol.positions /= norm_factor
-        self.symmops = {"C"    :[],
-                        "S"    :[],
-                        "sigma":[]}
+        self.symmops = {"C": [],
+                        "S": [],
+                        "sigma": []}
         # identity
         self.symmops["I"] = np.eye(3)
 
-        #inversion
+        # inversion
         inversion = - np.eye(3)
 
-        if is_valid_op(self.mol,inversion):
+        if is_valid_op(self.mol, inversion):
             self.symmops["-I"] = inversion
             logger.debug("Inversion center present")
         else:
             self.symmops["-I"] = None
 
-        self.nrot  = 0
-        self.nref  = 0
+        self.nrot = 0
+        self.nref = 0
         self.analyze()
 
         if self.schoenflies in ["C1v", "C1h"]:
             self.schoenflies = "Cs"
 
     def analyze(self):
-        """TODO"""
+        """Analyze the symmetry of the system."""
         if len(self.mol) == 1:
             self.schoenflies = "Kh"
         else:
             # Get the inertia tensor
             xyz = self.mol.get_positions()
-            W   = self.mol.get_masses()
-            I = inertia(xyz=xyz, W=W)
-            I /= np.sum(np.linalg.norm(xyz,axis=1)*W)
+            W = self.mol.get_masses()
+            Inertia = inertia(xyz=xyz, W=W)
+            Inertia /= np.sum(np.linalg.norm(xyz, axis=1)*W)
 
             # calculate the eigenvalues
-            eigvals, eigvecs = np.linalg.eigh(I)
+            eigvals, eigvecs = np.linalg.eigh(Inertia)
             self.eigvecs = eigvecs.T
             self.eigvals = eigvals
             e0, e1, e2 = self.eigvals
@@ -179,13 +185,13 @@ class PointGroup:
             self.analyze_cyclic_groups()
 
     def analyze_symmetric_top(self):
-        """ Handles symetric top molecules which has one unique eigenvalue whose
+        """Handles symetric top molecules which has one unique eigenvalue whose
         corresponding principal axis is a unique rotational axis.  More complex
         handling required to look for R2 axes perpendicular to this unique
         axis.
         """
         # identify unique axis
-        if   abs(self.eigvals[0] - self.eigvals[1]) < self.etol:
+        if abs(self.eigvals[0] - self.eigvals[1]) < self.etol:
             unique_axis = self.eigvecs[2]
         elif abs(self.eigvals[1] - self.eigvals[2]) < self.etol:
             unique_axis = self.eigvecs[0]
@@ -265,7 +271,7 @@ class PointGroup:
                 break
 
     def find_possible_equivalent_positions(self, axis=None):
-        """Returns the smallest list of atoms with the same species and
+        """Return the smallest list of atoms with the same species and
         distance from origin AND does not lie on the specified axis.  This
         maximal set limits the possible rotational symmetry operations,
         since atoms lying on a test axis is irrelevant in testing rotational
@@ -277,13 +283,13 @@ class PointGroup:
 
         valid_sets = []
         numbers = self.mol.get_atomic_numbers()
-        dists = np.linalg.norm(self.mol.get_positions(),axis=1,keepdims=True)
+        dists = np.linalg.norm(self.mol.get_positions(), axis=1, keepdims=True)
         clusters = fclusterdata(dists, self.tol, criterion='distance')
         for cval in set(clusters):
-            indices = np.where(clusters==cval)[0]
+            indices = np.where(clusters == cval)[0]
             #most common specie of set only
             counts = np.bincount(numbers[indices])
-            indices = indices[np.where(numbers[indices]==np.argmax(counts))[0]]
+            indices = indices[np.where(numbers[indices] == np.argmax(counts))[0]]
             if axis is not None:
                 indices = list(filter(not_on_axis, indices))
             if len(indices) > 1:
@@ -440,29 +446,29 @@ def get_potential_axes(mol):
 
 
 def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
-    """Return an array counting the found symmetries
-    of the object, up to axes of order max_order.
-    Enables fast comparison of compatibility between objects:
-    if array1 - array2 > 0, that means object1 fits the slot2 
+    """Return an array counting the found symmetries of the object, up to axes of order max_order.
+
+    Enables fast comparison of compatibility between objects: if array1 - array2 > 0, that means
+    object1 fits the slot2.
     """
-    if len(mol)==1:
+    if len(mol) == 1:
         logger.debug("Point-symmetry detected.")
-        symmetries = np.array([0,0,0,0,0,1])
+        symmetries = np.array([0, 0, 0, 0, 0, 1])
         return symmetries
-    
-    if len(mol)==2:
+
+    if len(mol) == 2:
         logger.debug("Linear connectivity detected.")
         # simplest, linear case
-        symmetries = np.array([1,1,0,1,1,2])
+        symmetries = np.array([1, 1, 0, 1, 1, 2])
         return symmetries
-    
+
     mol.center(about=0)
     # ensure there is a sufficient distance between connections
     dist = mol.get_all_distances().mean()
-    if dist<10.0:
+    if dist < 10.0:
         alpha = 10.0/dist
         mol.positions = mol.positions.dot(np.eye(3)*alpha)
-    
+
     logger.debug("DIST {}".format(dist))
     axes = get_potential_axes(mol)
     # array for the operations:
@@ -470,28 +476,28 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
     symmetries = np.zeros(4+2*max_order)
     # inversion
     inv = -1.0*np.eye(3)
-    has_inv = is_valid_op(mol,inv)
+    has_inv = is_valid_op(mol, inv)
     symmetries[0] += int(has_inv)
     # rotations:
     principal_order = 1
-    principal_axes  = []
+    principal_axes = []
     for axis in axes:
         for order in range(2, max_order + 1):
-            rot = rotation(axis,order)
-            has_rot = is_valid_op(mol,rot)
+            rot = rotation(axis, order)
+            has_rot = is_valid_op(mol, rot)
             symmetries[order - 1] += int(has_rot)
             if has_rot:
                 logger.debug("Detected: C{order}".format(order=order))
             # bookkeeping for the planes
             if has_rot and order > principal_order:
                 principal_order = order
-                principal_axes  = [axis,]
-            elif has_rot and order==principal_order:
+                principal_axes = [axis,]
+            elif has_rot and order == principal_order:
                 principal_axes.append(axis)
     # planes
     for axis in axes:
         ref = reflection(axis)
-        has_ref = is_valid_op(mol,ref)
+        has_ref = is_valid_op(mol, ref)
         if has_ref:
             dots = [abs(axis.dot(max_axis)) 
                     for max_axis in principal_axes]
@@ -499,25 +505,25 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
                 continue
             mindot = np.amin(dots)
             maxdot = np.amax(dots)
-            if maxdot>1.0-epsilon:
-                #sigma h
-                symmetries[-2]+=1
+            if maxdot > 1.0-epsilon:
+                # sigma h
+                symmetries[-2] += 1
                 logger.debug("Detected: sigma h")
-            elif mindot<epsilon:
-                #sigma vd
-                symmetries[-3]+=1
+            elif mindot < epsilon:
+                # sigma vd
+                symmetries[-3] += 1
                 logger.debug("Detected: sigma vd")
     # rotoreflections
     for axis in axes:
         ref = reflection(axis)
-        for order in range(2,max_order+1):
-            rot = rotation(axis,order)
-            rr  = rot.dot(ref)
-            has_rr = is_valid_op(mol,rr)
-            symmetries[order+max_order-2]+=int(has_rr)
+        for order in range(2, max_order+1):
+            rot = rotation(axis, order)
+            rr = rot.dot(ref)
+            has_rr = is_valid_op(mol, rr)
+            symmetries[order+max_order-2] += int(has_rr)
             if has_rr:
                 logger.debug("Detected: S{order}".format(order=order))
     # multiplicity
-    symmetries[-1]=len([x for x in mol if x.symbol=="X"])
-    
-    return np.array(symmetries,dtype=int)
+    symmetries[-1] = len([x for x in mol if x.symbol == "X"])
+
+    return np.array(symmetries, dtype=int)

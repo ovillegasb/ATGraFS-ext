@@ -11,7 +11,7 @@ import numpy as np
 
 from ase.neighborlist import NeighborList
 from ase import Atoms
-from ase.spacegroup import crystal, Spacegroup
+from ase.spacegroup import Spacegroup  # crystal
 
 from atgrafsE.utils import __data__
 from atgrafsE.utils.io import read_cgd
@@ -27,7 +27,7 @@ class Topology:
         """Construct for a topology, from an ASE Atoms."""
         logger.debug("Creating Topology {0}".format(name))
         self.name = name
-        self.atoms = atoms 
+        self.atoms = atoms
         # initialize empty fragments
         # shapes and symmops will be used to find
         # corresponding SBUs.
@@ -51,48 +51,47 @@ class Topology:
         return new
 
     def has_compatible_slots(self, sbu, coercion=False):
-        """Return [shapes...] for the slots compatible with the SBU"""
+        """Return [shapes...] for the slots compatible with the SBU."""
         slots = []
-        complist = [(ai, self.shapes[ai],self.pointgroups[ai]) 
-                    for ai in self.fragments.keys()]
+        complist = [(ai, self.shapes[ai], self.pointgroups[ai]) for ai in self.fragments.keys()]
         seen_idx = []
         for idx, shape, pg in complist:
             if idx in seen_idx:
                 continue
             eq_sites = [s for s in self.equivalent_sites if idx in s][0]
-            eq_sites = [s for s in eq_sites if self.shapes[s][-1]==shape[-1]]
+            eq_sites = [s for s in eq_sites if self.shapes[s][-1] == shape[-1]]
             seen_idx += eq_sites
-            # test for compatible multiplicity  
-            mult = (sbu.shape[-1] ==  shape[-1])
+            # test for compatible multiplicity
+            mult = (sbu.shape[-1] == shape[-1])
             if not mult:
                 continue
             # pointgroups are more powerful identifiers
-            if pg==sbu.pg:
-                slots+=[tuple(c[1]) for c in complist if c[0] in eq_sites]
+            if pg == sbu.pg:
+                slots += [tuple(c[1]) for c in complist if c[0] in eq_sites]
                 continue
             # the sbu has at least as many symmetry axes
-            symm = (sbu.shape[:-1]-shape[:-1]>=0).all()
+            symm = (sbu.shape[:-1]-shape[:-1] >= 0).all()
             if symm:
-                slots+=[tuple(c[1]) for c in complist if c[0] in eq_sites]
+                slots += [tuple(c[1]) for c in complist if c[0] in eq_sites]
                 continue
             if coercion:
                 # takes objects of corresponding
                 # multiplicity as compatible.
-                slots+=[tuple(c[1]) for c in complist if c[0] in eq_sites]
+                slots += [tuple(c[1]) for c in complist if c[0] in eq_sites]
                 continue
 
         return slots
 
     def _get_cutoffs(self, Xis, Ais):
-        """Return the cutoffs leading to the desired connectivity"""
+        """Return the cutoffs leading to the desired connectivity."""
         # initialize cutoffs to small non-zero skin partameter
         logger.debug("Generating cutoffs")
-        skin=5e-3
-        cutoffs=np.zeros(len(self.atoms)) + skin
+        skin = 5e-3
+        cutoffs = np.zeros(len(self.atoms)) + skin
         # we iterate over non-dummies
         for other_index in Ais:
             # we get the distances to all dummies and cluster accordingly
-            dists = self.atoms.get_distances(other_index,Xis,mic=True)
+            dists = self.atoms.get_distances(other_index, Xis, mic=True)
             coord = self.atoms[other_index].number
             if coord < len(dists):
                 # keep only the closest ones up to coordination
@@ -179,24 +178,25 @@ class Topology:
 
 
 def download_topologies():
-    """Downloads the topology file from the RCSR website"""
-    url  = "http://rcsr.anu.edu.au/downloads/RCSRnets.cgd"
+    """Download the topology file from the RCSR website."""
+    url = "http://rcsr.anu.edu.au/downloads/RCSRnets.cgd"
     root = os.path.join(__data__, "topologies")
     path = os.path.join(root, "nets.cgd")
     resp = requests.get(url, stream=True)
     if resp.status_code == 200:
         logger.info("Successfully downloaded the nets from RCSR.")
         resp.raw.decode_content = True
-        with open(path,"wb") as outpt:
+        with open(path, "wb") as outpt:
             shutil.copyfileobj(resp.raw, outpt)
 
 
 def read_topologies_database(update=False, path=None, use_defaults=True):
     """Return a dictionary of topologies as ASE Atoms."""
-    root     = os.path.join(__data__,"topologies")
-    db_file  = os.path.join(root,"topologies.pkl")
+    root = os.path.join(__data__, "topologies")
+    db_file = os.path.join(root, "topologies.pkl")
     # http://rcsr.anu.edu.au/downloads/RCSRnets-2019-06-01.cgd
-    cgd_file = os.path.join(root,"nets.cgd")
+    cgd_file = os.path.join(root, "nets.cgd")
+    logger.debug("Applying the function read_topologies_database")
     logger.debug("root: %s" % root)
     logger.debug("db_file: %s" % db_file)
     logger.debug("cgd_file: %s" % cgd_file)
@@ -219,8 +219,8 @@ def read_topologies_database(update=False, path=None, use_defaults=True):
         topologies_len = len(topologies)
         logger.info("{0:<5} topologies saved".format(topologies_len))
 
-        with open(db_file,"wb") as pkl:
-            pickle.dump(obj=topologies,file=pkl)
+        with open(db_file, "wb") as pkl:
+            pickle.dump(obj=topologies, file=pkl)
 
         return topologies
 
@@ -230,9 +230,5 @@ def read_topologies_database(update=False, path=None, use_defaults=True):
             topologies = pickle.load(file=pkl)
             topologies_len = len(topologies)
             logger.info("{0:<5} topologies loaded".format(topologies_len))
-            
+
             return topologies
-
-
-
-
