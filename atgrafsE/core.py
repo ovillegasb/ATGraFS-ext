@@ -2,12 +2,10 @@
 
 import logging
 
-import ase
 import numpy as np
 import itertools as it
 
 from collections import defaultdict
-from scipy.linalg import orthogonal_procrustes
 
 from atgrafsE.utils.topology import read_topologies_database
 from atgrafsE.utils.topology import Topology
@@ -33,6 +31,9 @@ class Autografs:
         logger.info("{0:*^80}".format("*"))
         logger.info("")
         logger.info("Reading the topology database.")
+        if topology_path is not None:
+            use_defaults = False
+
         self.topologies = read_topologies_database(
             path=topology_path,
             use_defaults=use_defaults,
@@ -41,21 +42,56 @@ class Autografs:
 
         logger.info("Reading the building units database.")
         self.sbu = read_sbu_database(
-            path=sbu_path,
-            use_defaults=use_defaults,
-            update=update
+            path=sbu_path
         )
 
         # container for current topology
         self.topology = None
         # container for current sbu mapping
-        self.sbu_dict = None
+        self.sbu_dict = {}
+        # Used Slot
+        self.used_slots = []
+        # dict of sbu per slots
+        self.sbu_per_slots = {}
+        # probabilities per sbu in case that them find in the same slot
+        self.prob_sbu = defaultdict(dict)
+        self.prob_per_slots = {}
+        self.type_per_slots = {}
         logger.info("")
+
+    def _entry_format(self, entry):
+        """Format entries."""
+        # Revisa el tipo de entrada y la adapta.
+        if isinstance(entry, list):
+            entry_formated = []
+            for elements in entry:
+                if isinstance(elements, str):
+                    entry_formated.append((elements, 1.0))
+                elif isinstance(elements, tuple):
+                    assert len(elements) == 2, "You have to use only two values if it's a tuple"
+                    name, p = elements
+                    name = str(name)
+                    p = float(p)
+                    entry_formated.append((name, p))
+            entry = entry_formated.copy()
+        else:
+            if isinstance(entry, str):
+                # 1) la entrada es un str ---> list[(str, float)]
+                entry = [(entry, 1.0)]
+
+            elif isinstance(entry, tuple):
+                # 2) la entrada es una tuple ---> list[(str, float)]
+                assert len(entry) == 2, "You have to use only two values if it's a tuple"
+                name, p = entry
+                name = str(name)
+                p = float(p)
+                entry = [(name, p)]
+
+        return entry
 
     def set_topology(self, topology_name, supercell=(1, 1, 1)):
         """Create and store the topology object."""
         logger.info("Topology set to --> {topo}".format(topo=topology_name.upper()))
-
         # make the supercell prior to alignment
         if isinstance(supercell, int):
             supercell = (supercell, supercell, supercell)
@@ -71,110 +107,238 @@ class Autografs:
 
         self.topology = topology
 
-    def make(self, topology_name=None, sbu_names=None, sbu_dict=None, supercell=(1, 1, 1), coercion=False):
+    def _checking_prob_corr(self, choice_sbu=False):
         """
-        Create a framework using given topology and sbu.
+        Check the defined probabilities and even correct them.
 
-        Main funtion of Autografs. The sbu names and topology's are to be taken from the compiled
-        databases. The sbu_dict can also be passed for multiple components frameworks.
+        At the moment it will not be allowed for a ligand to compete with a metal in the same slot
+        for, if this is found the probability for the ligand will be set to 0.0.
+        """
+        for slot in self.type_per_slots:
+            types_in = set(self.type_per_slots[slot])
+            if len(types_in) != 1:
+                for i, tp in enumerate(self.type_per_slots[slot]):
+                    if not choice_sbu:
+                        if tp == "ligand":
+                            self.prob_per_slots[slot][i] = 0.0
+                    else:
+                        if tp == "metal":
+                            self.prob_per_slots[slot][i] = 0.0
 
-        If the sbu_names is a list of tuples in the shape (name,n), the number n will be used as a
-        drawing probability when multiple options are available for the same shape.
+            prob = np.array(self.prob_per_slots[slot])
+            prob /= np.sum(prob)
+            self.prob_per_slots[slot] = list(prob)
+
+    def _slots_per_sbu(self, sbu, coercion):
+        """Find the compatible slots for an SBU."""
+        # get compatible slot from topology
+        slots = self.topology.has_compatible_slots(sbu=sbu, coercion=coercion)
+        for index, shape in self.topology.shapes.items():
+            # get slots from topolgy
+            # here, should accept weights also
+            shape = tuple(shape)
+
+            if shape not in slots:
+                logger.debug("Unfilled slot at index {idx}".format(idx=index))
+                continue
+
+            logger.debug("Slot {sl}: {sb} founded.".format(sl=index, sb=sbu.name))
+            self.sbu_per_slots[index].append(sbu)
+            self.prob_per_slots[index].append(self.prob_sbu[sbu.name]["p"])
+            self.type_per_slots[index].append(self.prob_sbu[sbu.name]["type"])
+
+    def _build_dict_SBU_selected(self, list_SBUs, coercion, choice_sbu):
+        """
+        Build a dictionary of selected SBUs.
+
+        Where the slots will be the keys and the SBUs the values. The selection of a given SBU
+        will depend on a given probability.
+        """
+        filled = True
+        for sbu in list_SBUs:
+            self._slots_per_sbu(sbu, coercion)
+
+        # Corrects the probabilities
+        self._checking_prob_corr(choice_sbu)
+
+        # It checks if all slots are full and selects the SBU according to its probabilities.
+        for slot in self.sbu_per_slots:
+            if len(self.sbu_per_slots[slot]) == 0:
+                logger.info("\t ---> Slot {} empty".format(slot))
+                filled = False
+                continue
+            sbu_chosen = np.random.choice(
+                self.sbu_per_slots[slot], p=self.prob_per_slots[slot]
+            )
+
+            self.sbu_dict[slot] = sbu_chosen.copy()
+            self.used_slots.append(slot)
+
+        return filled
+
+    def make_MOF(self, topology_name, metal=None, sbu_selected=None, supercell=(1, 1, 1,), coercion=False, edge_bonds=False, choice_sbu=False):
+        """
+        Return of the best mof found.
+
+        This will be the new core method of AuToGraFS.
+
+        This is a test mode that takes the name of a metal or an sbu (also a list of these), and
+        these will be positioned on the nodes of the topology. The EDGES will be taken as links
+        between the added compounds.
+
+        It is possible to add the insertion probability as a tuple: (name_sbu, 0.5).
+
+        If a metal is detected, just indicate the element and it will be assigned a geometry
+        detected in the topology.
+
+        The links will be built from an internal SBU consisting of two X-X atoms with a distance of
+        1.5 angs.
 
         Parameters:
         -----------
-        topology_name : str
-            Name of the topology to use.
+        topology_name : str, list of str, optional
 
-        sbu_names : list of str
-            List of names of the sbu to use.
+        metal : str, or list of str, or tuple, or list of tuples
 
-        sbu_dict : dict
-            (optional) One to one sbu to slot correspondance in the shape
-            {index of slot : 'name of sbu'}.
+        sbu : str, or list of str, or tuple, or list of tuples
 
         supercell : tuple(x3) of int
             (optional) Creates a supercell pre-treatment.
 
         coercion : bool
             (optional) Force the compatibility to only consider the multiplicity of SBU.
-
         """
-        logger.info("{0:-^50}".format(" Starting Framework Generation "))
+        logger.info("{0:-^80}".format(" Making MOF "))
         logger.info("")
 
         # only set the topology if not already done
         if topology_name is not None:
             self.set_topology(topology_name=topology_name, supercell=supercell)
 
-        # container for the aligned SBUs
+        assert self.topology is not None, "You must select a topology to search for slots."
+
+        if not self.topology.analyze_complet:
+            logger.info("Error in symmetry assignment")
+            logger.info("{0:-^80}".format(" MOF not generated "))
+            return None
+
+        pg_list = set([self.topology.pointgroups[key] for key in self.topology.pointgroups])
+        logger.info("Points group in topology: {}".format(" ".join(pg_list)))
+
+        logger.info("N={} shapes in topology".format(len(self.topology.shapes.items())))
+        self.slots_available = [items[0] for items in self.topology.shapes.items()]
+        logger.debug("Slots available: {}".format(" ".join([str(i) for i in self.slots_available])))
+
+        for index in self.slots_available:
+            self.sbu_per_slots[index] = []
+            self.prob_per_slots[index] = []
+            self.type_per_slots[index] = []
+
+        if sbu_selected is None and metal is None:
+            raise ValueError("No fragment has been defined for metal or sbu.")
+
+        # We start by studying the specified metal center.
+        if metal is not None:
+            logger.info("Metal center defined:")
+            metal = self._entry_format(metal)
+
+            for name, p in metal:
+                logger.info("\tmetal: {} ({})".format(name, p))
+        else:
+            metal = []
+
+        if sbu_selected is not None:
+            logger.info("SBUs defined:")
+            sbu_selected = self._entry_format(sbu_selected)
+
+            for name, p in sbu_selected:
+                logger.info("\tsbu: {} ({})".format(name, p))
+        else:
+            sbu_selected = []
+
+        # A list of SBUs will be created before searching for available slots.
+        list_SBUs = []
+
+        # If the option to take the edges as bonds is activated, a theoretical X--X molecule will
+        # be created.
+        if edge_bonds:
+            # Adding model for D*h slots
+            name = "X--X"
+            sbu = SBU(name=name)
+            sbu.define_geometry("", "D*h")
+            logger.info("Name: {} - Point group: {}".format(name, sbu.pg))
+            list_SBUs.append(sbu)
+            self.prob_sbu[name]["p"] = 1.0
+            self.prob_sbu[name]["type"] = "ligand"
+
+        # First the metals will be added to the list.
+        for pg in pg_list:
+            # At the moment the D*h option is not configured for metals.
+            if pg == "D*h":
+                continue
+
+            for element, p in metal:
+                name = f"{element}_{pg}"
+                try:
+                    sbu = SBU(name=name)
+                    sbu.define_geometry(element, pg)
+                    list_SBUs.append(sbu.copy())
+                    self.prob_sbu[name]["p"] = p
+                    self.prob_sbu[name]["type"] = "metal"
+                    logger.info("Name: {} - Point group: {}".format(name, sbu.pg))
+                except KeyError:
+                    logger.info("No geometry {} was found in the database.".format(pg))
+                    break
+
+        # The selected SBUs are now added
+        for name, p in sbu_selected:
+            list_SBUs.append(SBU(name=name, atoms=self.sbu[name]))
+            self.prob_sbu[name]["p"] = p
+            self.prob_sbu[name]["type"] = "ligand"
+
+        # All slots have a candidate
+        filled_slots = self._build_dict_SBU_selected(list_SBUs, coercion, choice_sbu)
+        if not filled_slots:
+            logger.info("Not all slots were filled.")
+            logger.info("{0:-^80}".format(" MOF not generated "))
+            return None
+        else:
+            logger.info("All slots have at least one candidate")
+
+        # identify the corresponding SBU
+        logger.info("Scheduling the SBU to slot alignment.")
+
+        # some logging
+        self.log_sbu_dict()
+
+        # MOF is initialized.
         aligned = Framework()
         aligned.set_topology(self.topology)
 
-        # identify the corresponding SBU
-        try:
-            if sbu_dict is None and sbu_names is not None:
-                logger.info("Scheduling the SBU to slot alignment.")
-                self.sbu_dict = self.get_sbu_dict(
-                    sbu_names=sbu_names,
-                    coercion=coercion
-                )
-            elif sbu_dict is not None:
-                logger.info("SBU to slot alignment is user defined.")
-                # the sbu_dict has been passed. if not SBU object, create them
-                for k, v in sbu_dict.items():
-                    if not isinstance(v, SBU):
-                        if not isinstance(v, ase.Atoms):
-                            name = str(v)
-                            v = self.sbu[name].copy()
-                        elif "name" in v.info.keys():
-                            name = v.info["name"]
-                        else:
-                            name = str(k)
-                        sbu_dict[k] = SBU(name=name, atoms=v)
-                self.sbu_dict = sbu_dict
-            else:
-                raise RuntimeError("Either supply sbu_names or sbu_dict.")
-        except RuntimeError as exc:
-            logger.error("Slot to SBU mappping interrupted.")
-            logger.error("{exc}".format(exc=exc))
-            logger.info("No valid framework was generated. Please check your input.")
-            logger.info("You can coerce sbu assignment by directly passing a slot to sbu dictionary.")
-            return
+        # Alignment start
+        aligned.alignment_sbu(self.sbu_dict)
+        if not aligned.complete_alignment:
+            logger.info("Alignment has not been completed")
+            logger.info("{0:-^80}".format(" MOF not generated "))
+            return None
+        else:
+            logger.info("Complete alignment")
 
-        # some logging
-        #REVISAR
-        self.log_sbu_dict(sbu_dict=self.sbu_dict, topology=self.topology)
-        # carry on
-        alpha = 0.0
-        for idx, sbu in self.sbu_dict.items():
-            logger.debug("Treating slot number {idx}".format(idx=idx))
-            logger.debug("\t|--> Aligning SBU {name}".format(name=sbu.name))
-            # now align and get the scaling factor
-            sbu, f = self.align(
-                fragment=self.topology.fragments[idx],
-                sbu=sbu
-            )
-            alpha += f
-            aligned.append(index=idx, sbu=sbu)
-
-        #exit()
-
+        logger.info("{0:-^80}".format(" Finished MOF generation "))
         logger.info("")
-        aligned.refine(alpha0=alpha)
-        logger.info("")
-        logger.info("Finished framework generation.")
-        logger.info("")
-        logger.info("{0:-^50}".format(" Post-treatment "))
+        logger.info("{0:-^80}".format(" Post-treatment "))
         logger.info("")
 
         return aligned
 
-    def log_sbu_dict(self, topology, sbu_dict=None):
+    def log_sbu_dict(self):
         """Do some logging on the chosen SBU mapping."""
-        for idx, sbu in sbu_dict.items():
-            logging.info("\tSlot {sl}".format(sl=idx))
-            logging.info("\t   |--> SBU {sbn}".format(sbn=sbu.name))
+        logger.info("Summary of slots:")
+        for idx in self.sbu_dict:
+            logger.info("\tSlot {}".format(idx))
+            sbu = self.sbu_dict[idx]
+            logger.info("\t   |--> SBU: {sbn}".format(sbn=sbu.name))
+            logger.info("\t   |--> PG: {pg}".format(pg=sbu.pg))
 
     def get_topology(self, topology_name=None):
         """Generate and return a Topology object.
@@ -186,149 +350,6 @@ class Autografs:
         """
         topology_atoms = self.topologies[topology_name]
         return Topology(name=topology_name, atoms=topology_atoms)
-
-    def get_sbu_dict(self, sbu_names, coercion=False):
-        """Return a dictionary of SBU by corresponding fragment.
-
-        This step obtains a one-to-one correspondence between each topology slot and an available
-        SBU from the list of names.
-
-        Parameters:
-        -----------
-        sbu_names : list of str
-            The list of SBU names as strings.
-
-        coercion : bool
-            Wether to force compatibility by coordination alone.
-        """
-        logger.debug("Generating slot to SBU map.")
-        assert self.topology is not None
-        weights = defaultdict(list)
-        by_shape = defaultdict(list)
-        for name in sbu_names:
-            # check if probabilities included
-            if isinstance(name, tuple):
-                name, p = name
-                p = float(p)
-                name = str(name)
-            else:
-                p = 1.0
-
-            # create the SBU object
-            sbu = SBU(name=name, atoms=self.sbu[name])
-            # returns a list of shapes for SBU-compatible slots.
-            slots = self.topology.has_compatible_slots(sbu=sbu, coercion=coercion)
-            #TODO, verificar
-            if not slots:
-                logger.debug("SBU {s} has no compatible slot in topology {t}".format(
-                    s=name, t=self.topology.name)
-                )
-                continue
-            for slot in slots:
-                weights[slot].append(p)
-                by_shape[slot].append(sbu)
-
-        # now fill the choices
-        sbu_dict = {}
-        logger.info("N={} shapes in topology".format(len(self.topology.shapes.items())))
-        for index, shape in self.topology.shapes.items():
-            # here, should accept weights also
-            shape = tuple(shape)
-            if shape not in by_shape.keys():
-                logger.info("Unfilled slot at index {idx}".format(idx=index))
-            p = weights[shape]
-            # no weights means same proba
-            p /= np.sum(p)
-            ############################
-            #TODO buscar porque es cero?
-            if len(p) == 0:
-                continue
-            ############################
-
-            sbu_chosen = np.random.choice(by_shape[shape], p=p).copy()
-            logger.debug("Slot {sl}: {sb} chosen with p={p}.".format(
-                sl=index,
-                sb=sbu_chosen.name,
-                p=p)
-            )
-            sbu_dict[index] = sbu_chosen
-        return sbu_dict
-
-    def get_vector_space(self, X):
-        """Return a vector space as four points."""
-        # initialize
-        x0 = X[0]
-        # find the point most orthogonal
-        dots = [x.dot(x0)for x in X]
-        i1 = np.argmin(dots)
-        x1 = X[i1]
-        # the second point maximizes the same with x1
-        dots = [x.dot(x1) for x in X[1:]]
-        i2 = np.argmin(dots)+1
-        x2 = X[i2]
-        # we find a third point
-        dots = [x.dot(x1)+x.dot(x0)+x.dot(x2) for x in X]
-        i3 = np.argmin(dots)
-        x3 = X[i3]
-
-        return np.asarray([x0, x1, x2, x3])
-
-    def align(self, fragment, sbu):
-        """Return an aligned SBU.
-
-        The SBU is rotated on top of the fragment using the procrustes library within scipy.
-        A scaling factor is also calculated for all three cell vectors.
-
-        Parameters:
-        -----------
-        fragment : ase.Atoms
-            The slot in the topology, ASE Atoms.
-
-        sbu : ase.Atoms
-            Object to align, ASE Atoms.
-        """
-        # first, we work with copies
-        fragment = fragment.copy()
-        # normalize and center
-        fragment_cop = fragment.positions.mean(axis=0)
-        fragment.positions -= fragment_cop
-        sbu.atoms.positions -= sbu.atoms.positions.mean(axis=0)
-
-        # identify dummies in sbu
-        sbu_Xis = [x.index for x in sbu.atoms if x.symbol == "X"]
-        # get the scaling factor
-        size_sbu = np.linalg.norm(sbu.atoms[sbu_Xis].positions, axis=1)
-        size_fragment = np.linalg.norm(fragment.positions, axis=1)
-        alpha = size_sbu.mean() / size_fragment.mean()
-
-        # TODO check initial scaling: it goes up too much with unit cell
-        ncop = np.linalg.norm(fragment_cop)
-        if ncop < 1e-6:
-            direction = np.ones(3, dtype=np.float32)
-            direction /= np.linalg.norm(direction)
-        else:
-            direction = fragment_cop / ncop
-
-        # scaling for better alignment
-        fragment.positions = fragment.positions.dot(np.eye(3)*alpha)
-        alpha *= direction / 2.0
-        # getting the rotation matrix
-        X0 = sbu.atoms[sbu_Xis].get_positions()
-        X1 = fragment.get_positions()
-        if X0.shape[0] > 5:
-            X0 = self.get_vector_space(X0)
-            X1 = self.get_vector_space(X1)
-        R, s = orthogonal_procrustes(X0, X1)
-        sbu.atoms.positions = sbu.atoms.positions.dot(R) + fragment_cop
-        fragment.positions += fragment_cop
-        # TEST
-        # ase.visualize.view(sbu.atoms+fragment)
-        res_d = ase.geometry.distance(sbu.atoms[sbu_Xis], fragment)
-        logger.debug("Residual distance: {d}".format(d=res_d))
-        # tag the atoms
-        sbu.transfer_tags(fragment)
-
-        return sbu, alpha
 
     def list_available_frameworks(self, topology_name=None, from_list=[], coercion=False):
         """Return a list of sbu_dict covering all the database.

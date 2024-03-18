@@ -1,9 +1,10 @@
-"""."""
+"""Submodule containing functions and classes for working with SBUs."""
 
 import os
 import logging
 import pickle
 
+import ase
 from ase import Atoms
 import numpy as np
 
@@ -14,6 +15,66 @@ from atgrafsE.utils import symmetry
 from atgrafsE.utils.mmanalysis import analyze_mm
 
 logger = logging.getLogger(__name__)
+
+
+# Skeleton of dummy atoms formed a geometry
+d = 0.8
+skeleton_X = {
+    "D*h": Atoms(
+        "XX",
+        positions=[(-d/8, 0, 0), (d/8, 0, 0)]
+    ),
+    "D4h": Atoms(
+        "XXXX",
+        positions=[(d, 0, 0), (0, d, 0), (-d, 0, 0), (0, -d, 0)]
+    ),
+    "D2h": Atoms(
+        "XXXX",
+        positions=[
+            (d*0.86602540, d*-0.5, 0),
+            (d*0.86602540, d*0.5, 0),
+            (d*-0.86602540, d*-0.5, 0),
+            (d*-0.86602540, d*0.5, 0)
+        ]
+    ),
+    "D3h": Atoms(
+        "XXX",
+        positions=[
+            (0, d, 0),
+            (0, -d*np.sin(np.deg2rad(30.0)), -d*np.cos(np.deg2rad(30.0))),
+            (0, -d*np.sin(np.deg2rad(30.0)), d*np.cos(np.deg2rad(30.0)))
+        ]
+    ),
+    "Td": Atoms(
+        "XXXX",
+        positions=[
+            (0, 0, d),
+            (0, d*-0.94280904, d*-0.33333333),
+            (d*0.81649658, d*0.47140452, d*-0.33333333),
+            (d*-0.81649658, d*0.47140452, d*-0.33333333)
+        ]
+    ),
+    "D2d***": Atoms(#MODIFICAR TODO
+        "XXXX",
+        positions=[
+            (d*-0.17022212, d*0.09827779, d*0.98049269),
+            (d*0.17022212, d*-0.89165810, d*-0.41948808),
+            (d*0.85730963, d*0.29841237, d*-0.41948808),
+            (d*-0.85730963, d*0.49496795, d*-0.14151652),
+        ]
+    ),
+    "Oh": Atoms(
+        "XXXXXX",
+        positions=[
+            (0, 0, d),
+            (0, d, 0),
+            (d, 0, 0),
+            (0, 0, -d),
+            (0, -d, 0),
+            (-d, 0, 0)
+        ]
+    )
+}
 
 
 class SBU:
@@ -39,8 +100,7 @@ class SBU:
 
     def _analyze(self):
         """Guess the mmtypes, bonds and pointgroup."""
-        logger.debug("SBU {0}: analyze bonding and symmetry.".format(self.name))
-
+        logger.debug("SBU {}: analyze bonding and symmetry.".format(self.name))
         # Detects geometry from dummy atoms
         dummies = Atoms([x for x in self.atoms if x.symbol == "X"])
         if len(dummies) > 0:
@@ -52,9 +112,17 @@ class SBU:
             )
             self.shape = shape
             self.pg = pg.schoenflies
-        bonds, mmtypes = analyze_mm(self.get_atoms())
-        self.bonds = bonds
-        self.mmtypes = mmtypes
+
+        ####REVISAR TODO
+        ## bonds, mmtypes = analyze_mm(self.get_atoms())
+        ####>>>> Testing a particular SBU
+        ####if self.name == "dicarboxylate_oxalate":
+        ####    print(bonds)
+        ####    print(self.atoms.get_chemical_symbols())
+        ####    exit()
+
+        ##self.bonds = bonds
+        ##self.mmtypes = mmtypes
 
     def set_atoms(self, atoms, analyze=False):
         """Set new Atoms object and reanalyze."""
@@ -72,6 +140,7 @@ class SBU:
         new.mmtypes = np.copy(self.mmtypes)
         new.bonds = np.copy(self.bonds)
         new.shape = list(self.shape)
+        new.pg = self.pg
 
         return new
 
@@ -89,38 +158,41 @@ class SBU:
             self.atoms[si].tag = atom.tag
             unused.remove(si)
 
+    def define_geometry(self, element, schoenflies):
+        """
+        Generate SBU with a geometry from an element.
 
-def read_sbu_database(update=False, path=None, use_defaults=True):
-    """Return a dictionnary of ASE Atoms as SBUs."""
-    db_file = os.path.join(__data__, "sbu/sbu.pkl")
-    user_db = (path is not None)
-    no_dflt = (not os.path.isfile(db_file))
-    logger.debug("db_file: %s" % db_file)
-    logger.debug("user_db: %s" % user_db)
-    logger.debug("no_dflt: %s" % no_dflt)
-    if (user_db or update or no_dflt):
-        sbu = {}
-        if use_defaults:
-            logger.info("Loading the building units from default library")
-            sbu_tmp = read_sbu(path=None)
-            sbu.update(sbu_tmp)
+        It will read an element and an ASE Atoms object will be created with the dummy atoms
+        forming the indicated geometry.
+        """
+        struc = skeleton_X[schoenflies]
+        if element != "":
+            struc += ase.Atom(element, (0, 0, 0))
+        self.atoms = struc
+        self._analyze()
 
-        if path is not None:
-            logger.info("Loading the building units from {0}".format(path))
-            sbu_tmp = read_sbu(path=path)
-            sbu.update(sbu_tmp)
 
-        sbu_len = len(sbu)
-        logger.info("{0:<5} sbu loaded.".format(sbu_len))
-        with open(db_file, "wb") as pkl:
-            pickle.dump(obj=sbu, file=pkl)
+def read_sbu_database(path=None):
+    """
+    Return a dictionnary of ASE Atoms as SBUs.
 
-        return sbu
+    Parameters:
+    -----------
+    path : str
+        Folder or file where the SBUs are contained.
+    """
+    logger.debug("Reading the database.")
 
+    sbu = {}
+    if path is not None:
+        logger.info("Loading the building units from {0}".format(path))
+        sbu_tmp = read_sbu(path=path)
+        sbu.update(sbu_tmp)
     else:
-        logger.info("Using saved sbu")
-        with open(db_file, "rb") as pkl:
-            sbu = pickle.load(file=pkl)
-            sbu_len = len(sbu)
-            logger.info("{0:<5} sbu loaded".format(sbu_len))
-            return sbu
+        logger.info("Loading the building units from default library")
+        sbu_tmp = read_sbu(path=None)
+        sbu.update(sbu_tmp)
+    sbu_len = len(sbu)
+
+    logger.info("{0:<5} sbu loaded".format(sbu_len))
+    return sbu

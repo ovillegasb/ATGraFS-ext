@@ -11,6 +11,8 @@ from ase.spacegroup import crystal
 from ase.spacegroup.spacegroup import get_datafile
 
 from atgrafsE.utils import __data__
+import atgrafsE.utils.topology
+
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,13 @@ def read_cgd(path=None):
 
     # the script as such starts here
     error_counter = 0
+
+    # Used format for topologies:
+    # CENTER_EDGE: He
+    # Dummy atom: X
+
+    # info lines
+    info_lines = "topology;n_pg;l_pg;dim;n_nodes;n_edges\n"
     with open(topology_file, "r") as tpf:
         text = tpf.read()
         # split the file by topology
@@ -118,6 +127,7 @@ def read_cgd(path=None):
                 elif line[0].startswith("CELL"):
                     cell = np.array(line[1:], dtype=np.float64)
                 elif line[0].startswith("NODE"):
+                    # Group type
                     this_symbol = chemical_symbols[int(line[2])]
                     this_node = np.array(line[3:], dtype=np.float64)
                     nodes.append(this_node)
@@ -155,7 +165,6 @@ def read_cgd(path=None):
                 # 2D net, only one angle and two vectors.
                 # need to be completed up to 6 parameters
                 # FORMAT: CELL a b gamma
-                ##TODO
                 pbc = [True, True, False]
                 c = 10.0  # WHY?, test
                 alpha = 90.0
@@ -203,56 +212,107 @@ def read_cgd(path=None):
                     onduplicates="keep"
                 )
             except AssertionError:
-                logger.debug("An error has been found inside the crital function, check defined parameters c, alpha and beta, group: %s" % group)
+                logger.debug("An error has been found inside the crystal function, check defined parameters c, alpha and beta, group: %s" % group)
                 error_counter += 1
                 continue
             # TODO !!! find a way to use equivalent positions for
             # the multiple components frameworks !!!
             # use the info keyword to store it
             topologies[name] = topology
+            atoms = topology.copy()
+            topology = atgrafsE.utils.topology.Topology(name=name, atoms=atoms)
+            pg_list = [topology.pointgroups[key] for key in topology.pointgroups]
+            pg_list = set(pg_list)
+            n_nodes = 0
+            n_edges = 0
+            for atom in atoms:
+                if atom.symbol not in ["X", "He"]:
+                    n_nodes += 1
+                elif atom.symbol == "He":
+                    n_edges += 1
+
+            info_lines += "\"{}\";{};{};{};{};{}\n".format(
+                name,
+                len(pg_list),
+                "-".join(pg_list),
+                sum(atoms.pbc),
+                n_nodes,
+                n_edges
+            )
 
     logger.info("Topologies read with {err} errors.".format(err=error_counter))
-    return topologies
+    return topologies, info_lines
 
 
-def read_sbu(path=None, formats=["xyz"]):
+def read_sbu(path=None):
     """
     Return a dictionary of Atoms objects.
 
     If the path is not specified, use the default library.
-    TODO: Should use a chained iterable of path soon.
-    path    -- where to find the sbu
-    formats -- what molecular file format to read
+    TODO?: Should use a chained iterable of path soon.
+
+    Parameters:
+    -----------
+    path : str
+        Where to find the sbu.
+
+    formats : list of str.
+        What molecular file format to read
     """
+    formats = ["xyz"]
     if path is not None:
         path = os.path.abspath(path)
     else:
         path = os.path.join(__data__, "sbu")
 
-    logger.debug("path: {}".format(path))
+    # Checking whether the specified path exists
+    assert os.path.exists(path), "Path could not be found"
 
+    logger.debug("path: {}".format(path))
     SBUs = {}
-    # if this is a file
-    if path.endswith("xyz"):
-        sbu_file = path
-        ext = sbu_file.split(".")[-1]
-        for sbu in ase.io.iread(sbu_file):
+    # If this is a file
+    if os.path.isfile(path):
+        # Check if the format is available.
+        ext = path.split(".")[-1]
+        assert ext in formats, "The indicated format is not available"
+        i = 1
+        for sbu in ase.io.iread(path):
             try:
                 name = sbu.info["name"]
                 SBUs[name] = sbu
-            except Exception as e:
+                i += 1
+            except AttributeError:
+                logger.warning(f"The name field was not detected in a structure, structure number: {i}.")
+                i += 1
+                continue
+            except KeyError:
+                logger.warning(f"The name field was not detected in a structure, structure number: {i}.")
+                i += 1
                 continue
 
-    else:
+    elif os.path.isdir(path):
         for sbu_file in os.listdir(path):
             ext = sbu_file.split(".")[-1]
             if ext in formats:
+                i = 1
                 for sbu in ase.io.iread(os.path.join(path, sbu_file)):
                     try:
                         name = sbu.info["name"]
                         SBUs[name] = sbu
-                    except Exception as e:
+                        i += 1
+                    except KeyError:
+                        logger.warning(f"The name field was not detected in a structure, structure number: {i}.")
+                        i += 1
                         continue
+                    except AttributeError:
+                        logger.warning(f"The name field was not detected in a structure, structure number: {i}.")
+                        i += 1
+                        continue
+
+            else:
+                logger.warning(f"File format detected in the folder not available: {ext}.")
+                continue
+
     return SBUs
 
 
@@ -317,4 +377,3 @@ def write_gin(path, atoms, bonds, mmtypes):
         if sum(pbc)==3:
             fileobj.write('output cif {0}.cif\n'.format(name))
         return None
-

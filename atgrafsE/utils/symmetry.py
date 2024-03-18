@@ -1,4 +1,4 @@
-"""."""
+"""Submodule containing functions and classes to study the symmetry and operations of Atoms."""
 
 import logging
 
@@ -372,9 +372,8 @@ class PointGroup:
 
 
 def unique_axes(potential_axes, epsilon=0.1):
-    """Return non colinear potential_axes only"""
+    """Return non colinear potential_axes only."""
     axes = [potential_axes[0], ]
-    indices = []
     for axis in potential_axes[1:]:
         colinear = False
         for seen_axis in axes:
@@ -387,26 +386,29 @@ def unique_axes(potential_axes, epsilon=0.1):
 
     return np.asarray(axes)
 
+
 def get_potential_axes(mol):
-    """Return all potential symmetry axes.
-    faces, nodes, midway points, etc.
-    """
+    """Return all potential symmetry axes, faces, nodes, midway points, etc."""
     potential_axes = []
     try:
         # full analysis needed
         qhull = ConvexHull(mol.get_positions())
         logger.debug("Using Convex Hull algorithm for axis detection.")
+        # forming the hyperplane equation of the facet
         for equation in qhull.equations:
             # normal of simplices
             axis = equation[0:3]
             potential_axes.append(axis)
-        
+
+        # Indices of points forming the vertices of the convex hull. For 2-D convex hulls, the
+        # vertices are in counterclockwise order. For other dimensions, they are in input order.
         for node in qhull.vertices:
             # exterior points
             axis = qhull.points[node]
             norm = np.linalg.norm(axis)
             potential_axes.append(axis)
-        
+
+        # Indices of points forming the simplical facets of the convex hull.
         for simplex in qhull.simplices:
             for side in it.combinations(list(simplex), 2):
                 # middle of side
@@ -414,29 +416,32 @@ def get_potential_axes(mol):
                 axis = qhull.points[side].mean(axis=0)
                 potential_axes.append(axis)
                 # perpendicular to side
-                a0,a1 = qhull.points[side]  
-                axis = np.cross(a0,a1)
+                a0, a1 = qhull.points[side]
+                axis = np.cross(a0, a1)
                 potential_axes.append(axis)
 
     except QhullError:
         logger.debug("Planar connectivity detected.")
-        #coplanarity detected
+        # coplanarity detected
         positions = mol.get_positions()
         potential_axes += [axis for axis in positions]
+
         # since coplanar, any two simplices describe the plane
         for side in it.combinations(list(positions), 2):
             # middle of side
             axis = np.array(side).mean(axis=0)
-            potential_axes.append(axis)             
-            axis = np.cross(side[0],side[1])
-            potential_axes.append(axis)     
-        for a0,a1 in it.combinations(list(potential_axes),2):
-            axis = np.cross(a0,a1)
-            potential_axes.append(axis)     
+            potential_axes.append(axis)
+            axis = np.cross(side[0], side[1])
+            potential_axes.append(axis)
+
+        for a0, a1 in it.combinations(list(potential_axes), 2):
+            axis = np.cross(a0, a1)
+            potential_axes.append(axis)
+
     potential_axes = np.array(potential_axes)
-    norm = np.linalg.norm(potential_axes,axis=1)
+    norm = np.linalg.norm(potential_axes, axis=1)
     norm[norm < 1e-3] = 1.0
-    potential_axes /= norm[:,None]
+    potential_axes /= norm[:, None]
     # remove zero norms
     mask = np.isnan(potential_axes).any(axis=1)
     potential_axes = potential_axes[~mask]
@@ -446,25 +451,30 @@ def get_potential_axes(mol):
 
 
 def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
-    """Return an array counting the found symmetries of the object, up to axes of order max_order.
+    """Return an array counting the found symmetries of the object, up to axes of order.
 
     Enables fast comparison of compatibility between objects: if array1 - array2 > 0, that means
     object1 fits the slot2.
     """
+    logger.debug("{0:-^80}".format(" The search for symmetry of elements has been started "))
+
     if len(mol) == 1:
         logger.debug("Point-symmetry detected.")
         symmetries = np.array([0, 0, 0, 0, 0, 1])
+        logger.debug("{0:-^80}".format(" End of symmetry search "))
         return symmetries
 
     if len(mol) == 2:
         logger.debug("Linear connectivity detected.")
         # simplest, linear case
         symmetries = np.array([1, 1, 0, 1, 1, 2])
+        logger.debug("{0:-^80}".format(" End of symmetry search "))
         return symmetries
 
     mol.center(about=0)
     # ensure there is a sufficient distance between connections
     dist = mol.get_all_distances().mean()
+    #TODO? why 10.0?
     if dist < 10.0:
         alpha = 10.0/dist
         mol.positions = mol.positions.dot(np.eye(3)*alpha)
@@ -474,11 +484,14 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
     # array for the operations:
     # size = (1inversion+rotationorders+rotinvorders+2planes+1multiplicity)
     symmetries = np.zeros(4+2*max_order)
-    # inversion
+    # 3D Inversion Matrix from origin system
+    # or origin reflexion
     inv = -1.0*np.eye(3)
     has_inv = is_valid_op(mol, inv)
     symmetries[0] += int(has_inv)
+
     # rotations:
+    # ----------
     principal_order = 1
     principal_axes = []
     for axis in axes:
@@ -494,18 +507,19 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
                 principal_axes = [axis,]
             elif has_rot and order == principal_order:
                 principal_axes.append(axis)
+
     # planes
+    # ------
     for axis in axes:
         ref = reflection(axis)
         has_ref = is_valid_op(mol, ref)
         if has_ref:
-            dots = [abs(axis.dot(max_axis)) 
-                    for max_axis in principal_axes]
+            dots = [abs(axis.dot(max_axis)) for max_axis in principal_axes]
             if not dots:
                 continue
             mindot = np.amin(dots)
             maxdot = np.amax(dots)
-            if maxdot > 1.0-epsilon:
+            if maxdot > 1.0 - epsilon:
                 # sigma h
                 symmetries[-2] += 1
                 logger.debug("Detected: sigma h")
@@ -513,7 +527,9 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
                 # sigma vd
                 symmetries[-3] += 1
                 logger.debug("Detected: sigma vd")
+
     # rotoreflections
+    # ---------------
     for axis in axes:
         ref = reflection(axis)
         for order in range(2, max_order+1):
@@ -525,5 +541,8 @@ def get_symmetry_elements(mol, max_order=8, epsilon=0.1):
                 logger.debug("Detected: S{order}".format(order=order))
     # multiplicity
     symmetries[-1] = len([x for x in mol if x.symbol == "X"])
+
+    # symmetries : [inv, ax1:nR, ax2:nR, ax3:nR, ..., pl1:nRf, pl2:nRf, pl3:nRf]
+    logger.debug("{0:-^80}".format(" End of symmetry search "))
 
     return np.array(symmetries, dtype=int)

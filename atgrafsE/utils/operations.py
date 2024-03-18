@@ -1,4 +1,4 @@
-"""."""
+"""Sumodule that summarizes many functions with mathematical operations."""
 
 import numpy as np
 
@@ -22,60 +22,75 @@ def inertia(xyz, W):
                   [Ixz,Iyz,Izz]],dtype=np.float64)
     return I
 
+
 def rotation(axis, order):
-    """Return a rotation matrix around the axis"""
+    """Return a rotation matrix around the axis."""
     M = np.eye(3)
     norm = np.linalg.norm(axis)
-    if norm<1e-3:
+    if norm < 1e-3:
         norm = 1.0
+
     axis /= norm
-    v0      = axis[0]
-    v1      = axis[1]
-    v2      = axis[2]
-    theta   = 2.0*np.pi/order
-    costh   = np.cos(theta)
-    sinth   = np.sin(theta)
-    M[0,0] = costh + (1.0-costh)*v0**2
-    M[1,1] = costh + (1.0-costh)*v1**2
-    M[2,2] = costh + (1.0-costh)*v2**2
-    M[1,0] = (1.0-costh)*v0*v1 + v2*sinth
-    M[0,1] = (1.0-costh)*v0*v1 - v2*sinth
-    M[2,0] = (1.0-costh)*v0*v2 - v1*sinth
-    M[0,2] = (1.0-costh)*v0*v2 + v1*sinth
-    M[2,1] = (1.0-costh)*v1*v2 + v0*sinth
-    M[1,2] = (1.0-costh)*v1*v2 - v0*sinth   
+    v0 = axis[0]
+    v1 = axis[1]
+    v2 = axis[2]
+    theta = 2.0*np.pi/order
+    costh = np.cos(theta)
+    sinth = np.sin(theta)
+    M[0, 0] = costh + (1.0-costh)*v0**2
+    M[1, 1] = costh + (1.0-costh)*v1**2
+    M[2, 2] = costh + (1.0-costh)*v2**2
+    M[1, 0] = (1.0-costh)*v0*v1 + v2*sinth
+    M[0, 1] = (1.0-costh)*v0*v1 - v2*sinth
+    M[2, 0] = (1.0-costh)*v0*v2 - v1*sinth
+    M[0, 2] = (1.0-costh)*v0*v2 + v1*sinth
+    M[2, 1] = (1.0-costh)*v1*v2 + v0*sinth
+    M[1, 2] = (1.0-costh)*v1*v2 - v0*sinth
+
     return M
 
 
 def reflection(axis):
-    """Return a reflection matrix around the axis"""
-    M = np.eye(3)    
+    """Return a reflection matrix around the axis."""
+    M = np.eye(3)
     norm = np.linalg.norm(axis)
-    if norm<1e-3:
+    if norm < 1e-3:
         norm = 1.0
     axis /= norm
-    v0      = axis[0]
-    v1      = axis[1]
-    v2      = axis[2]
-    M[0,0] = 1.0-2.0*v0*v0
-    M[1,1] = 1.0-2.0*v1*v1
-    M[2,2] = 1.0-2.0*v2*v2
-    M[1,0] =    -2.0*v0*v1 
-    M[0,1] =    -2.0*v0*v1 
-    M[2,0] =    -2.0*v0*v2 
-    M[0,2] =    -2.0*v0*v2 
-    M[2,1] =    -2.0*v1*v2 
-    M[1,2] =    -2.0*v1*v2
+
+    v0 = axis[0]
+    v1 = axis[1]
+    v2 = axis[2]
+
+    M[0, 0] = 1.0-2.0*v0*v0
+    M[1, 1] = 1.0-2.0*v1*v1
+    M[2, 2] = 1.0-2.0*v2*v2
+    M[1, 0] = -2.0*v0*v1
+    M[0, 1] = -2.0*v0*v1
+    M[2, 0] = -2.0*v0*v2
+    M[0, 2] = -2.0*v0*v2
+    M[2, 1] = -2.0*v1*v2
+    M[1, 2] = -2.0*v1*v2
+
     return M
 
 
-def is_valid_op(mol, symmop, epsilon = 0.1):
-    """Check if a particular symmetry operation is a valid symmetry operation
-    for a molecule, i.e., the operation maps all atoms to another
-    equivalent atom.
-        -- mol : ASE Atoms object. subject of symmop
-        -- symmop: Symmetry operation to test.
-        -- epsilon : numerical tolerance of the
+def is_valid_op(mol, symmop, epsilon=0.1):
+    """Check if a particular symmetry operation is a valid symmetry operation for a molecule.
+
+    i.e., the operation maps all atoms to another equivalent atom.
+
+    Parameters:
+    -----------
+    mol : ase.Atoms
+        ASE Atoms object. subject of symmop.
+
+    symmop : numpy.array
+        Symmetry operation to test.
+
+    epsilon : float, optional
+        This tolerance defines the maximum tolerated value to indicate whether the operation was
+    valid or not.
     """
     distances = []
     mol0 = mol.copy()
@@ -88,5 +103,14 @@ def is_valid_op(mol, symmop, epsilon = 0.1):
         distances.append(np.amin(dist))
     distances = np.array(distances)
 
-    return (distances<epsilon).all()
+    return (distances < epsilon).all()
 
+
+def calculate_angle(point1, point2, centroid):
+    """Calculate the angle formed by two points pal passing through its centroid."""
+    vector1 = point1 - centroid
+    vector2 = point2 - centroid
+    dot_product = np.dot(vector1, vector2)
+    vec1_norm = np.linalg.norm(vector1)
+    vec2_norm = np.linalg.norm(vector2)
+    return np.rad2deg(np.arccos(dot_product/vec1_norm/vec2_norm))

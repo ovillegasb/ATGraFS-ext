@@ -2,4 +2,4 @@
 
 import os
 
-__data__    = os.path.join("/".join(os.path.dirname(__file__).split("/")[:-1]),"data")
+__data__ = os.path.join("/".join(os.path.dirname(__file__).split("/")[:-1]), "data")
